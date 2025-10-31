@@ -6,7 +6,7 @@ import ChatWindow from "./ChatWindow";
 const token = localStorage.getItem("token");
 const userId = localStorage.getItem("userId");
 
-const socket = io("http://192.168.1.101:5000", {
+const socket = io("https://chat-express-abm.vercel.app", {
     auth: {token},
 });
 

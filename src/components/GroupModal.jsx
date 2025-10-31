@@ -18,7 +18,7 @@ export default function GroupModal({ isOpen, onClose,setActiveChat,  token }) {
         const fetchUsers = async () => {
             try {
                 const res = await fetch(
-                    `http://192.168.1.101:5000/api/users/search?query=${encodeURIComponent(searchTerm)}`,
+                    `https://chat-express-abm.vercel.app/api/users/search?query=${encodeURIComponent(searchTerm)}`,
                     {
                         headers: { Authorization: `Bearer ${token}` },
                         signal: controller.signal,
@@ -49,7 +49,7 @@ export default function GroupModal({ isOpen, onClose,setActiveChat,  token }) {
         if (!groupName.trim() || selectedUsers.length === 0) return alert("نام گروه و اعضا را وارد کنید!");
 
         try {
-            const res = await fetch("http://192.168.1.101:5000/api/group/create", {
+            const res = await fetch("https://chat-express-abm.vercel.app/api/group/create", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",

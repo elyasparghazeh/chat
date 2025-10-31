@@ -15,7 +15,7 @@ const LoginPage = () => {
         setSuccess('');
 
         try {
-            const response = await axios.post('http://192.168.1.101:5000/api/auth/login', {
+            const response = await axios.post('https://chat-express-abm.vercel.app/api/auth/login', {
                 email,
                 password,
             });
