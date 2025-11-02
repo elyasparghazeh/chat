@@ -24,7 +24,7 @@ export default function ChatSidebar({
         const fetchUsers = async () => {
             try {
                 const res = await fetch(
-                    `https://chat-express-abm.vercel.app/api/users/search?query=${encodeURIComponent(
+                    `${process.env.REACT_APP_BASE_URL}/api/users/search?query=${encodeURIComponent(
                         searchTerm
                     )}`,
                     {

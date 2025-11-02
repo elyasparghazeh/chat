@@ -60,7 +60,7 @@ const VideoCall = ({ socket, currentUserId, targetUserId }) => {
             }
         };
 
-        // دریافت stream فقط در صورت نیاز
+        // اینجا باید صبر کنیم تا getUserMedia کامل شود
         let stream = localStream;
         if (!stream) {
             stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -71,7 +71,10 @@ const VideoCall = ({ socket, currentUserId, targetUserId }) => {
             localVideo.current.srcObject = stream;
         }
 
+        // اطمینان از افزودن track قبل از return
         stream.getTracks().forEach((track) => pc.current.addTrack(track, stream));
+
+        return pc.current; // 🔹 این خط مهم است تا بتوانیم صبر کنیم
     };
 
     // --- شروع تماس (caller)
@@ -93,10 +96,11 @@ const VideoCall = ({ socket, currentUserId, targetUserId }) => {
 
     // --- پذیرش تماس (callee)
     const acceptCall = async () => {
-        await initPeerConnection();
-        await pc.current.setRemoteDescription(callIncoming.offer);
-        const answer = await pc.current.createAnswer();
-        await pc.current.setLocalDescription(answer);
+        const pcInstance = await initPeerConnection(); // مطمئن شویم stream اضافه شده
+        await pcInstance.setRemoteDescription(callIncoming.offer);
+
+        const answer = await pcInstance.createAnswer();
+        await pcInstance.setLocalDescription(answer);
 
         socket.emit("answer", {
             to: callIncoming.from,
@@ -106,6 +110,7 @@ const VideoCall = ({ socket, currentUserId, targetUserId }) => {
         setInCall(true);
         setCallIncoming(null);
     };
+
 
     // --- رد تماس
     const declineCall = () => {
