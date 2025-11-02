@@ -1,16 +1,11 @@
 import React, {useState, useEffect} from "react";
-import {io} from "socket.io-client";
 import ChatSidebar from "./ChatSidebar";
 import ChatWindow from "./ChatWindow";
+import {useCall} from "./CallContext";
 
-const token = localStorage.getItem("token");
-const userId = localStorage.getItem("userId");
-
-const socket = io(process.env.REACT_APP_BASE_URL, {
-    auth: {token},
-});
 
 export default function ChatApp() {
+    const {socket, userId, token} = useCall()
     const [conversations, setConversations] = useState([]);
     const [activeChat, setActiveChat] = useState(null);
 
@@ -23,8 +18,8 @@ export default function ChatApp() {
         socket.emit("getConversations", userId);
 
         const handlers = {
-            conversationList: (e)=>{
-            setConversations(e)
+            conversationList: (e) => {
+                setConversations(e)
             },
             newConversation: (conversation) => {
                 setConversations((prev) => {

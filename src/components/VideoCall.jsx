@@ -1,138 +1,117 @@
 import React, { useRef, useState, useEffect } from "react";
 
-const VideoCall = ({ socket, currentUserId, targetUserId }) => {
+const VideoCall = ({ socket, currentUserId, targetUserId, incomingOffer }) => {
     const localVideo = useRef(null);
     const remoteVideo = useRef(null);
     const pc = useRef(null);
+    const pendingCandidates = useRef([]);
 
     const [localStream, setLocalStream] = useState(null);
-    const [callIncoming, setCallIncoming] = useState(null);
     const [inCall, setInCall] = useState(false);
+    const [isCaller, setIsCaller] = useState(false);
 
-    // --- تنظیم لیسنرهای WebSocket
     useEffect(() => {
         if (!socket) return;
 
-        socket.on("offer", async ({ from, offer }) => {
-            setCallIncoming({ from, offer });
-        });
-
-        socket.on("answer", async ({ answer }) => {
-            if (pc.current) await pc.current.setRemoteDescription(answer);
-        });
-
-        socket.on("iceCandidate", async ({ candidate }) => {
-            if (pc.current && candidate) {
-                try {
-                    await pc.current.addIceCandidate(candidate);
-                } catch (e) {
-                    console.error("ICE error", e);
-                }
+        const onAnswer = async ({ answer }) => {
+            if (isCaller && pc.current) {
+                await pc.current.setRemoteDescription(answer);
+                await flushCandidates();
             }
-        });
+        };
 
-        socket.on("endCall", handleEndCall);
+        const onIce = async ({ candidate }) => {
+            if (!candidate) return;
+            pendingCandidates.current.push(candidate);
+            if (pc.current?.remoteDescription) await flushCandidates();
+        };
+
+        const onEnd = () => handleEndCall();
+
+        socket.on("answer", onAnswer);
+        socket.on("iceCandidate", onIce);
+        socket.on("endCall", onEnd);
 
         return () => {
-            socket.off("offer");
-            socket.off("answer");
-            socket.off("iceCandidate");
-            socket.off("endCall");
+            socket.off("answer", onAnswer);
+            socket.off("iceCandidate", onIce);
+            socket.off("endCall", onEnd);
         };
-    }, [socket]);
+    }, [socket, isCaller]);
 
-    // --- ساخت PeerConnection
+    useEffect(() => {
+        if (incomingOffer) {
+            handleIncomingOffer(incomingOffer);
+        }
+    }, [incomingOffer]);
+
+    const flushCandidates = async () => {
+        while (pendingCandidates.current.length) {
+            const c = pendingCandidates.current.shift();
+            try {
+                await pc.current.addIceCandidate(c);
+            } catch {}
+        }
+    };
+
     const initPeerConnection = async () => {
         pc.current = new RTCPeerConnection();
 
         pc.current.onicecandidate = (event) => {
             if (event.candidate && targetUserId) {
-                socket.emit("iceCandidate", {
-                    to: targetUserId,
-                    candidate: event.candidate,
-                });
+                socket.emit("iceCandidate", { to: targetUserId, candidate: event.candidate });
             }
         };
 
         pc.current.ontrack = (event) => {
-            if (remoteVideo.current) {
-                remoteVideo.current.srcObject = event.streams[0];
-            }
+            if (remoteVideo.current) remoteVideo.current.srcObject = event.streams[0];
         };
 
-        // اینجا باید صبر کنیم تا getUserMedia کامل شود
-        let stream = localStream;
-        if (!stream) {
-            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            setLocalStream(stream);
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        setLocalStream(stream);
+        if (localVideo.current) localVideo.current.srcObject = stream;
+        stream.getTracks().forEach((t) => pc.current.addTrack(t, stream));
 
-        if (localVideo.current && !localVideo.current.srcObject) {
-            localVideo.current.srcObject = stream;
-        }
-
-        // اطمینان از افزودن track قبل از return
-        stream.getTracks().forEach((track) => pc.current.addTrack(track, stream));
-
-        return pc.current; // 🔹 این خط مهم است تا بتوانیم صبر کنیم
+        return pc.current;
     };
 
-    // --- شروع تماس (caller)
     const startCall = async () => {
-        if (!targetUserId) return alert("کاربر مقابل مشخص نیست");
-
-        await initPeerConnection();
-        const offer = await pc.current.createOffer();
-        await pc.current.setLocalDescription(offer);
-
-        socket.emit("offer", {
-            to: targetUserId,
-            from: currentUserId,
-            offer,
-        });
-
+        setIsCaller(true);
         setInCall(true);
+
+        const peer = await initPeerConnection();
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+
+        socket.emit("offer", { to: targetUserId, from: currentUserId, offer });
     };
 
-    // --- پذیرش تماس (callee)
-    const acceptCall = async () => {
-        const pcInstance = await initPeerConnection(); // مطمئن شویم stream اضافه شده
-        await pcInstance.setRemoteDescription(callIncoming.offer);
-
-        const answer = await pcInstance.createAnswer();
-        await pcInstance.setLocalDescription(answer);
-
-        socket.emit("answer", {
-            to: callIncoming.from,
-            answer,
-        });
-
+    const handleIncomingOffer = async (offer) => {
         setInCall(true);
-        setCallIncoming(null);
+        const peer = await initPeerConnection();
+        await peer.setRemoteDescription(offer);
+        await flushCandidates();
+
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+
+        socket.emit("answer", { to: targetUserId, answer });
     };
 
-
-    // --- رد تماس
-    const declineCall = () => {
-        setCallIncoming(null);
-    };
-
-    // --- قطع تماس
     const handleEndCall = () => {
-        if (localVideo.current?.srcObject) {
+        if (localVideo.current?.srcObject)
             localVideo.current.srcObject.getTracks().forEach((t) => t.stop());
-        }
-        if (remoteVideo.current?.srcObject) {
+        if (remoteVideo.current?.srcObject)
             remoteVideo.current.srcObject.getTracks().forEach((t) => t.stop());
-        }
+
         if (pc.current) {
-            pc.current.ontrack = null;
-            pc.current.onicecandidate = null;
             pc.current.close();
             pc.current = null;
         }
+
         setInCall(false);
-        setCallIncoming(null);
+        setIsCaller(false);
+        pendingCandidates.current = [];
     };
 
     const endCall = () => {
@@ -140,77 +119,52 @@ const VideoCall = ({ socket, currentUserId, targetUserId }) => {
         handleEndCall();
     };
 
-    // --- mute / unmute
     const toggleMute = () => {
         if (!localStream) return;
-        const audioTrack = localStream.getAudioTracks()[0];
-        audioTrack.enabled = !audioTrack.enabled;
+        const track = localStream.getAudioTracks()[0];
+        track.enabled = !track.enabled;
     };
 
     return (
-        <div className="p-4 space-y-4">
+        <div className="flex flex-col items-center p-4 text-white space-y-4">
             {!inCall && (
-                <button
-                    onClick={startCall}
-                    className="bg-blue-500 text-white px-4 py-2 rounded-lg"
-                >
-                    📞 شروع تماس ویدیویی
+                <button onClick={startCall} className="bg-blue-500 px-5 py-2 rounded-lg">
+                    📞 شروع تماس
                 </button>
             )}
 
-            {callIncoming && (
-                <div className="bg-gray-800 text-white p-4 rounded-lg">
-                    <p>درخواست تماس از {callIncoming.from}</p>
-                    <div className="flex gap-2 mt-2">
+            {inCall && (
+                <>
+                    <div className="flex flex-col md:flex-row gap-4 w-full justify-center">
+                        <video
+                            ref={localVideo}
+                            autoPlay
+                            playsInline
+                            muted
+                            className="w-1/2 rounded-lg shadow-lg"
+                        />
+                        <video
+                            ref={remoteVideo}
+                            autoPlay
+                            playsInline
+                            className="w-1/2 rounded-lg shadow-lg"
+                        />
+                    </div>
+                    <div className="flex gap-3 mt-4">
                         <button
-                            onClick={acceptCall}
-                            className="bg-green-500 px-3 py-1 rounded"
+                            onClick={toggleMute}
+                            className="bg-yellow-500 px-4 py-2 rounded-lg"
                         >
-                            قبول
+                            🔇 بی‌صدا/فعال
                         </button>
                         <button
-                            onClick={declineCall}
-                            className="bg-red-500 px-3 py-1 rounded"
+                            onClick={endCall}
+                            className="bg-red-600 px-4 py-2 rounded-lg"
                         >
-                            رد
+                            ⏹ پایان تماس
                         </button>
                     </div>
-                </div>
-            )}
-
-            {inCall && (
-                <div className="flex flex-col md:flex-row gap-4 mt-4">
-                    <video
-                        ref={localVideo}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-1/2 rounded-lg shadow"
-                    />
-                    <video
-                        ref={remoteVideo}
-                        autoPlay
-                        playsInline
-                        className="w-1/2 rounded-lg shadow"
-                    />
-                </div>
-            )}
-
-            {inCall && (
-                <div className="flex gap-3 mt-3">
-                    <button
-                        onClick={toggleMute}
-                        className="bg-yellow-500 text-white px-4 py-2 rounded-lg"
-                    >
-                        🔇 بی‌صدا / فعال
-                    </button>
-                    <button
-                        onClick={endCall}
-                        className="bg-red-600 text-white px-4 py-2 rounded-lg"
-                    >
-                        ⏹ پایان تماس
-                    </button>
-                </div>
+                </>
             )}
         </div>
     );
